@@ -61,7 +61,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const enc = data?.bullseye_lemlist_api_key_encrypted as string | null;
     if (!enc) return res.status(400).json({ error: "Este cliente no tiene API key de Lemlist configurada" });
 
-    apiKey = decrypt(enc);
+    apiKey = decrypt(enc).trim();
+    console.log("[lemlist] decrypted key length:", apiKey.length, "preview:", apiKey.slice(0, 6) + "..." + apiKey.slice(-4));
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return res.status(500).json({ error: "No se pudo desencriptar la API key: " + msg });
@@ -72,6 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const url = new URL(LEMLIST_BASE + path);
     if (!url.searchParams.has("api_key")) url.searchParams.set("api_key", apiKey);
+
+    console.log("[lemlist] calling:", method, url.pathname + url.search.replace(apiKey, "***"));
 
     const upstream = await fetch(url.toString(), {
       method,
@@ -84,6 +87,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const text = await upstream.text();
+    console.log("[lemlist] response status:", upstream.status, "body:", text.slice(0, 300));
+
     res.status(upstream.status);
     res.setHeader("Content-Type", "application/json");
     return res.send(text || "{}");
