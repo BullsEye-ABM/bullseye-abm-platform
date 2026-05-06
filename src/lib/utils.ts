@@ -34,14 +34,65 @@ export interface RawCSVData {
   rows: string[][];
 }
 
+// Parser RFC 4180: maneja comillas, comas dentro de comillas, comillas escapadas (""),
+// CRLF y LF. Robusto frente a exports de HubSpot, Excel, Google Sheets.
 export function parseCSV(text: string): RawCSVData {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return { headers: [], rows: [] };
-  const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
-  const rows = lines
-    .slice(1)
-    .filter(l => l.trim())
-    .map(line => line.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
+  const allRows: string[][] = [];
+  let curRow: string[] = [];
+  let curCell = "";
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          curCell += '"';     // comilla escapada ""
+          i += 2;
+        } else {
+          inQuotes = false;   // cierre de comillas
+          i++;
+        }
+      } else {
+        curCell += ch;
+        i++;
+      }
+    } else {
+      if (ch === '"' && curCell === "") {
+        inQuotes = true;
+        i++;
+      } else if (ch === ",") {
+        curRow.push(curCell);
+        curCell = "";
+        i++;
+      } else if (ch === "\n" || ch === "\r") {
+        curRow.push(curCell);
+        allRows.push(curRow);
+        curRow = [];
+        curCell = "";
+        if (ch === "\r" && text[i + 1] === "\n") i += 2;
+        else i++;
+      } else {
+        curCell += ch;
+        i++;
+      }
+    }
+  }
+  // Último valor / fila
+  if (curCell !== "" || curRow.length > 0) {
+    curRow.push(curCell);
+    allRows.push(curRow);
+  }
+  // Sacar filas completamente vacías al final
+  while (allRows.length > 0 && allRows[allRows.length - 1].every(c => !c.trim())) {
+    allRows.pop();
+  }
+  if (allRows.length < 1) return { headers: [], rows: [] };
+
+  const headers = allRows[0].map(h => h.trim());
+  const rows = allRows.slice(1).map(r => r.map(c => c.trim()));
   return { headers, rows };
 }
 
