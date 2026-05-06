@@ -67,12 +67,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: "No se pudo desencriptar la API key: " + msg });
   }
 
-  // 2. Llamada a Lemlist
+  // 2. Llamada a Lemlist — pasamos el api_key por TODOS los métodos posibles
+  //    (Basic Auth + Bearer + query param) para máxima compatibilidad v1/v2.
   try {
-    const upstream = await fetch(LEMLIST_BASE + path, {
+    const url = new URL(LEMLIST_BASE + path);
+    if (!url.searchParams.has("api_key")) url.searchParams.set("api_key", apiKey);
+
+    const upstream = await fetch(url.toString(), {
       method,
       headers: {
         "Authorization": "Basic " + Buffer.from(apiKey + ":").toString("base64"),
+        "Api-Key": apiKey,
         "Content-Type": "application/json",
       },
       body: body ? JSON.stringify(body) : undefined,
