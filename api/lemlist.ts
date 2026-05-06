@@ -76,10 +76,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log("[lemlist] calling:", method, url.pathname + url.search.replace(apiKey, "***"));
 
+    // Lemlist v1: Basic Auth con username vacío y api_key como PASSWORD: ":" + apiKey
     const upstream = await fetch(url.toString(), {
       method,
       headers: {
-        "Authorization": "Basic " + Buffer.from(apiKey + ":").toString("base64"),
+        "Authorization": "Basic " + Buffer.from(":" + apiKey).toString("base64"),
         "Api-Key": apiKey,
         "Content-Type": "application/json",
       },
