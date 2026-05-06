@@ -83,10 +83,17 @@ export async function callLemlist(
   let parsed: unknown;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
   if (!res.ok) {
-    const errMsg =
-      typeof parsed === "object" && parsed && "error" in parsed
-        ? String((parsed as { error: unknown }).error)
-        : "Lemlist error " + res.status;
+    // Surface the FULL upstream body so podamos diagnosticar
+    let errMsg = "Lemlist HTTP " + res.status;
+    if (typeof parsed === "object" && parsed) {
+      const obj = parsed as Record<string, unknown>;
+      if ("error" in obj && typeof obj.error === "string") errMsg = obj.error;
+      else if ("message" in obj && typeof obj.message === "string") errMsg = obj.message;
+      else errMsg += ": " + JSON.stringify(parsed);
+    } else if (typeof parsed === "string" && parsed) {
+      errMsg += ": " + parsed.slice(0, 300);
+    }
+    console.error("[Lemlist]", { status: res.status, path, body: parsed });
     throw new Error(errMsg);
   }
   return parsed;
