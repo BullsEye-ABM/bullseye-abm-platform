@@ -185,7 +185,7 @@ export async function generatePersona(
     titlesCtx,
     "Industria: " + industry,
     "Analiza los cargos, identifica el perfil más común y construye el persona desde ahí.",
-    'Responde SOLO con JSON: {"name":"nombre ficticio","title":"cargo representativo","summary":"2 oraciones","pains":["p1","p2","p3"],"motivations":["m1","m2"],"objections":["o1","o2"],"kpis":["k1","k2"],"channels":["c1","c2"]}',
+    '{"name":"nombre ficticio","title":"cargo representativo","summary":"2 oraciones","pains":["p1","p2","p3"],"motivations":["m1","m2"],"objections":["o1","o2"],"kpis":["k1","k2"],"channels":["c1","c2"]}',
   ].join("\n");
 
   const resp = await callAnthropic({
@@ -233,14 +233,11 @@ export const GenService = {
     _jobs.set(segId, job);
     notify();
 
+    const CONCURRENCY = 5;
     const MAX_RETRIES = 1;
 
-    for (let i = 0; i < opts.toProcess.length; i++) {
-      if (job.cancelled) break;
-      job.current = i + 1;
-      notify();
-
-      const contact = opts.toProcess[i];
+    const processContact = async (contact: BullseyeContact) => {
+      if (job.cancelled) return;
       let lastErr: Error | null = null;
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -262,7 +259,7 @@ export const GenService = {
           break;
         } catch (e: unknown) {
           lastErr = e instanceof Error ? e : new Error(String(e));
-          if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 2000));
+          if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
         }
       }
 
@@ -278,8 +275,19 @@ export const GenService = {
         });
       }
 
-      await new Promise(r => setTimeout(r, 600));
-    }
+      job.current += 1;
+      notify();
+    };
+
+    // Run with bounded concurrency
+    const queue = [...opts.toProcess];
+    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+      while (queue.length > 0 && !job.cancelled) {
+        const contact = queue.shift()!;
+        await processContact(contact);
+      }
+    });
+    await Promise.all(workers);
 
     _jobs.delete(segId);
     await segmentsRepo.refreshCounts(segId);
