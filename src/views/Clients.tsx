@@ -264,18 +264,11 @@ function ClientPanel({
     for (const f of files) {
       try {
         if (f.name.toLowerCase().endsWith(".pdf")) {
-          const path = `bullseye-pdfs/${client.id}/${Date.now()}-${f.name}`;
-          const { error: upErr } = await supabase.storage.from("bullseye-sources").upload(path, f);
-          if (upErr) {
-            errors.push(`${f.name}: ${upErr.message}`);
-            continue;
-          }
-          const { data: pub } = supabase.storage.from("bullseye-sources").getPublicUrl(path);
+          const b64 = await readBase64(f);
           await sourcesRepo.create({
             client_id: client.id, type: "pdf", name: f.name, size: f.size,
-            storage_path: pub.publicUrl,
+            content: b64,
           });
-          void readBase64;
         } else {
           const content = (await readText(f)).slice(0, 8000);
           await sourcesRepo.create({
@@ -464,3 +457,5 @@ function LemlistKeyModal({
     </Modal>
   );
 }
+
+void supabase; // keep import for future Storage use

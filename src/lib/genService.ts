@@ -30,7 +30,7 @@ const notify = () => {
   _listeners.forEach(fn => fn(snapshot));
 };
 
-// ─── Prompt builders ──────────────────────────────────────────────────────────
+// ─── Prompt builders ─────────────────────────────────────────────────────
 function buildPrompt(
   contact: BullseyeContact,
   campaign: BullseyeCampaign,
@@ -40,10 +40,12 @@ function buildPrompt(
   directives: string,
 ): { prompt: string; pdfDocs: Array<Record<string, unknown>>; useSearch: boolean } {
   const pdfDocs = sources
-    .filter(s => s.type === "pdf" && s.storage_path)
+    .filter(s => s.type === "pdf" && (s.storage_path || s.content))
     .map(s => ({
       type: "document",
-      source: { type: "url", url: s.storage_path! },
+      source: s.content
+        ? { type: "base64", media_type: "application/pdf", data: s.content }
+        : { type: "url", url: s.storage_path! },
       title: s.name,
     }));
 
@@ -107,7 +109,7 @@ function buildPrompt(
   return { prompt, pdfDocs, useSearch };
 }
 
-// ─── Generar mensajes para 1 contacto ─────────────────────────────────────────
+// ─── Generar mensajes para 1 contacto ───────────────────────────────────────────────────
 export async function generateMessagesForContact(
   contact: BullseyeContact,
   campaign: BullseyeCampaign,
@@ -156,7 +158,7 @@ export async function generateMessagesForContact(
   }
 }
 
-// ─── Buyer persona (para simulación) ──────────────────────────────────────────
+// ─── Buyer persona (para simulación) ──────────────────────────────────────────────
 export interface PersonaShape {
   name: string;
   title: string;
@@ -193,7 +195,7 @@ export async function generatePersona(
   return JSON.parse(m ? m[0] : resp.text) as PersonaShape;
 }
 
-// ─── Job runner ───────────────────────────────────────────────────────────────
+// ─── Job runner ────────────────────────────────────────────────────────────────────────
 export interface StartJobOpts {
   segment: BullseyeSegment;
   campaign: BullseyeCampaign;
@@ -286,7 +288,7 @@ export const GenService = {
   },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
 export function isErrorMsg(m: { linkedin?: string[]; email?: { subject?: string; body?: string }[]; whatsapp?: string[] }) {
   const liOk = m.linkedin?.some(x => x && !x.startsWith("[Error") && x.trim() !== "");
   const emOk = m.email?.some(e => e?.body && e.body.trim() !== "" && e.subject !== "Error");
@@ -294,7 +296,7 @@ export function isErrorMsg(m: { linkedin?: string[]; email?: { subject?: string;
   return !liOk && !emOk && !waOk;
 }
 
-// ─── Simulation ───────────────────────────────────────────────────────────────
+// ─── Simulation ───────────────────────────────────────────────────────────────────────────────
 export interface SimulationReaction {
   contact_name: string;
   channel: string;
