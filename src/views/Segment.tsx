@@ -4,7 +4,8 @@ import { C, parseCSV, applyColumnMap, FIELD_LABELS, readText } from "../lib/util
 import {
   segmentsRepo, contactsRepo, messagesRepo, personasRepo, directivesRepo, sourcesRepo,
 } from "../lib/db";
-import { GenService, generatePersona, isErrorMsg } from "../lib/genService";
+import { GenService, generatePersona, isErrorMsg, simulateMessages } from "../lib/genService";
+import type { SimulationResult } from "../lib/genService";
 import { callLemlist } from "../lib/api";
 import type {
   BullseyeCampaign, BullseyeSegment, Client,
@@ -18,7 +19,7 @@ interface Props {
   onBack: () => void;
 }
 
-type Tab = "contacts" | "messages" | "sources" | "persona" | "lemlist";
+type Tab = "contacts" | "messages" | "sources" | "persona" | "lemlist" | "simulator";
 
 export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
   const [segment, setSegment] = useState<BullseyeSegment | null>(null);
@@ -32,6 +33,8 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
   const [editId, setEditId] = useState<string | null>(null);
   const [showDir, setShowDir] = useState(false);
   const [genPersona, setGenPersona] = useState(false);
+  const [simResult, setSimResult] = useState<SimulationResult | null>(null);
+  const [simLoading, setSimLoading] = useState(false);
   const dirSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -162,17 +165,44 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
     setGenPersona(false);
   };
 
+  const handleSimulate = async () => {
+    if (simLoading) return;
+    setSimLoading(true);
+    try {
+      const result = await simulateMessages(messages, contacts, persona, campaign);
+      setSimResult(result);
+    } catch (e: unknown) {
+      alert("Error en simulación: " + (e instanceof Error ? e.message : String(e)));
+    }
+    setSimLoading(false);
+  };
+
+  const handleApplySuggestions = async () => {
+    if (!simResult || isGenerating || !segment) return;
+    const suggestionBlock = "\n\nSUGERENCIAS DE SIMULACIÓN (aplicar obligatoriamente):\n" +
+      simResult.insights.suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    const newDirectives = (directives || "").trim() + suggestionBlock;
+    saveDirectives(newDirectives);
+    await directivesRepo.set(segmentId, newDirectives);
+    GenService.start(segmentId, {
+      segment, campaign, client, sources, directives: newDirectives, toProcess: contacts,
+      onDone: () => loadAll(),
+    });
+    setTab("messages");
+  };
+
   if (!segment) return <div style={{ color: C.textMuted }}>Cargando segmento...</div>;
 
   const approved = messages.filter(m => m.approved).length;
   const pending = contacts.filter(c => !messages.find(m => m.contact_id === c.id)).length;
   const hasErrors = messages.some(isErrorMsg);
   const tabs: { k: Tab; l: string }[] = [
-    { k: "contacts", l: "Contactos" },
-    { k: "messages", l: "Mensajes" },
-    { k: "sources",  l: "Fuentes"  },
-    { k: "persona",  l: "Buyer Persona" },
-    { k: "lemlist",  l: "Enviar a Lemlist" },
+    { k: "contacts",  l: "Contactos" },
+    { k: "messages",  l: "Mensajes" },
+    { k: "sources",   l: "Fuentes" },
+    { k: "persona",   l: "Buyer Persona" },
+    { k: "simulator", l: "Simulador" },
+    { k: "lemlist",   l: "Enviar a Lemlist" },
   ];
 
   return (
@@ -474,6 +504,198 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SIMULATOR TAB */}
+        {tab === "simulator" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+              <Btn
+                v="primary"
+                onClick={handleSimulate}
+                disabled={simLoading || messages.filter(m => !isErrorMsg(m)).length === 0}
+              >
+                {simLoading ? "Simulando..." : simResult ? "↻ Re-simular" : "Iniciar simulación"}
+              </Btn>
+              {messages.filter(m => !isErrorMsg(m)).length === 0 && (
+                <span style={{ fontSize: "12px", color: C.textMuted }}>
+                  Genera mensajes en la pestaña Mensajes primero
+                </span>
+              )}
+              {simResult && !simLoading && (
+                <span style={{ fontSize: "12px", color: C.textMuted }}>
+                  Basado en {Math.min(messages.filter(m => !isErrorMsg(m)).length, 6)} mensajes
+                  {persona ? ` · Persona: ${persona.name}` : " · Perfil genérico"}
+                </span>
+              )}
+            </div>
+
+            {simLoading && (
+              <div style={card({ textAlign: "center", padding: "56px" })}>
+                <div style={{ fontSize: "36px", marginBottom: "14px" }}>🧠</div>
+                <div style={{ fontSize: "14px", fontWeight: 600, color: C.textMd, marginBottom: "6px" }}>
+                  Simulando audiencia virtual...
+                </div>
+                <div style={{ fontSize: "12px", color: C.textFaint }}>
+                  Analizando mensajes y calculando métricas de apertura, respuesta e interés
+                </div>
+              </div>
+            )}
+
+            {!simResult && !simLoading && (
+              <div style={card({ textAlign: "center", padding: "56px" })}>
+                <div style={{ fontSize: "36px", marginBottom: "14px" }}>🎯</div>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: C.textMd, marginBottom: "10px" }}>
+                  Simulador de mensajes
+                </div>
+                <div style={{ fontSize: "13px", color: C.textFaint, maxWidth: "420px", margin: "0 auto", lineHeight: 1.6 }}>
+                  Crea un público virtual basado en el buyer persona y expone los mensajes generados.
+                  Obtén tasa de apertura, tasa de respuesta e interés generado, más insights con puntos
+                  fuertes, debilidades y sugerencias.
+                </div>
+              </div>
+            )}
+
+            {simResult && !simLoading && (
+              <div>
+                {/* KPI cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px", marginBottom: "20px" }}>
+                  <div style={card({ textAlign: "center", padding: "24px 20px" })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
+                      Tasa de Apertura
+                    </div>
+                    <div style={{ fontSize: "40px", fontWeight: 800, color: C.accent, lineHeight: 1 }}>
+                      {simResult.open_rate}%
+                    </div>
+                    <div style={{ fontSize: "11px", color: C.textFaint, marginTop: "6px" }}>de la audiencia virtual</div>
+                  </div>
+                  <div style={card({ textAlign: "center", padding: "24px 20px" })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
+                      Tasa de Respuesta
+                    </div>
+                    <div style={{ fontSize: "40px", fontWeight: 800, color: C.success, lineHeight: 1 }}>
+                      {simResult.response_rate}%
+                    </div>
+                    <div style={{ fontSize: "11px", color: C.textFaint, marginTop: "6px" }}>probabilidad de respuesta</div>
+                  </div>
+                  <div style={card({ textAlign: "center", padding: "24px 20px" })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
+                      Interés Generado
+                    </div>
+                    <div style={{ fontSize: "40px", fontWeight: 800, color: C.purple, lineHeight: 1 }}>
+                      {simResult.interest_score}%
+                    </div>
+                    <div style={{ marginTop: "8px" }}>
+                      <Badge color={simResult.interest_level === "alto" ? "green" : simResult.interest_level === "medio" ? "amber" : "gray"}>
+                        {simResult.interest_level.charAt(0).toUpperCase() + simResult.interest_level.slice(1)}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reactions table */}
+                {simResult.reactions.length > 0 && (
+                  <div style={card({ marginBottom: "16px", padding: 0, overflow: "hidden" })}>
+                    <div style={{ padding: "14px 18px", borderBottom: "1px solid " + C.border, background: C.pageBg }}>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>
+                        Reacciones del público virtual
+                      </div>
+                    </div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                      <thead>
+                        <tr>
+                          {["Contacto", "Canal", "Abre", "Responde", "Interés", "Comentario"].map(h => (
+                            <th key={h} style={TH}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {simResult.reactions.map((r, idx) => (
+                          <tr key={idx}>
+                            <td style={TD}>{r.contact_name}</td>
+                            <td style={TD}>
+                              <Badge color={r.channel === "linkedin" ? "blue" : r.channel === "email" ? "amber" : "green"}>
+                                {r.channel}
+                              </Badge>
+                            </td>
+                            <td style={TD}>{r.opens ? "✅" : "❌"}</td>
+                            <td style={TD}>{r.responds ? "✅" : "❌"}</td>
+                            <td style={TD}>
+                              <Badge color={r.interest === "alto" ? "green" : r.interest === "medio" ? "amber" : "gray"}>
+                                {r.interest}
+                              </Badge>
+                            </td>
+                            <td style={{ ...TD, color: C.textMuted, fontStyle: "italic", fontSize: "11px" }}>
+                              {r.comment}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Insights */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px", marginBottom: "20px" }}>
+                  <div style={card({ borderTop: "3px solid " + C.success })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>
+                      Puntos Fuertes
+                    </div>
+                    {(simResult.insights.strengths || []).map((s, i) => (
+                      <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "10px", fontSize: "12px", color: C.textMd, lineHeight: 1.5 }}>
+                        <span style={{ color: C.success, fontWeight: 800, flexShrink: 0 }}>✓</span>
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={card({ borderTop: "3px solid #C0392B" })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#C0392B", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>
+                      Debilidades
+                    </div>
+                    {(simResult.insights.weaknesses || []).map((w, i) => (
+                      <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "10px", fontSize: "12px", color: C.textMd, lineHeight: 1.5 }}>
+                        <span style={{ color: "#C0392B", fontWeight: 800, flexShrink: 0 }}>✗</span>
+                        {w}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={card({ borderTop: "3px solid " + C.info })}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C.info, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>
+                      Sugerencias
+                    </div>
+                    {(simResult.insights.suggestions || []).map((sg, i) => (
+                      <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "10px", fontSize: "12px", color: C.textMd, lineHeight: 1.5 }}>
+                        <span style={{ color: C.info, fontWeight: 800, flexShrink: 0 }}>{i + 1}.</span>
+                        {sg}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Apply suggestions */}
+                <div style={card({ background: C.infoBg, border: "1px solid " + C.info + "44" })}>
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: C.text, marginBottom: "6px" }}>
+                    Aplicar sugerencias y regenerar
+                  </div>
+                  <div style={{ fontSize: "12px", color: C.textMd, marginBottom: "16px", lineHeight: 1.6 }}>
+                    Regenera todos los mensajes incorporando las {(simResult.insights.suggestions || []).length} sugerencias
+                    identificadas por la simulación. Las sugerencias se añadirán como directrices de generación y todos
+                    los mensajes del segmento serán reemplazados.
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <Btn v="primary" onClick={handleApplySuggestions} disabled={isGenerating}>
+                      {isGenerating ? "Regenerando..." : "Aplicar sugerencias y regenerar mensajes"}
+                    </Btn>
+                    {isGenerating && (
+                      <span style={{ fontSize: "12px", color: C.textMuted }}>
+                        Puedes seguir el progreso en la pestaña Mensajes
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
