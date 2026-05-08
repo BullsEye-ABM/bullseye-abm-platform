@@ -4,6 +4,7 @@ import { C, parseCSV, applyColumnMap, FIELD_LABELS, readText } from "../lib/util
 import {
   segmentsRepo, contactsRepo, messagesRepo, personasRepo, directivesRepo, sourcesRepo,
 } from "../lib/db";
+import { supabase } from "../lib/supabase";
 import { GenService, generatePersona, isErrorMsg, simulateMessages } from "../lib/genService";
 import type { SimulationResult } from "../lib/genService";
 import { callLemlist } from "../lib/api";
@@ -37,6 +38,9 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
   const [simLoading, setSimLoading] = useState(false);
   const dirSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const srcDocRef = useRef<HTMLInputElement>(null);
+  const [newSrcUrl, setNewSrcUrl] = useState("");
+  const [srcUploading, setSrcUploading] = useState(false);
 
   const [genJobs, setGenJobs] = useState(GenService.getJobs());
   useEffect(() => {
@@ -189,6 +193,46 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
       onDone: () => loadAll(),
     });
     setTab("messages");
+  };
+
+  const addSrcUrl = async () => {
+    if (!client || !newSrcUrl.trim()) return;
+    const url = newSrcUrl.startsWith("http") ? newSrcUrl : "https://" + newSrcUrl;
+    await sourcesRepo.create({
+      client_id: client.id, type: "url",
+      name: url.replace(/^https?:\/\//, "").split("/")[0], url,
+    });
+    setNewSrcUrl("");
+    sourcesRepo.listByClient(client.id).then(setSources);
+  };
+
+  const handleSrcDoc = async (e: ChangeEvent<HTMLInputElement>) => {
+    if (!client) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setSrcUploading(true);
+    for (const f of files) {
+      try {
+        if (f.name.toLowerCase().endsWith(".pdf")) {
+          const path = `bullseye-pdfs/${client.id}/${Date.now()}-${f.name}`;
+          const { error: upErr } = await supabase.storage.from("bullseye-sources").upload(path, f);
+          if (upErr) { console.warn("Error subiendo PDF:", upErr); continue; }
+          const { data: pub } = supabase.storage.from("bullseye-sources").getPublicUrl(path);
+          await sourcesRepo.create({ client_id: client.id, type: "pdf", name: f.name, size: f.size, storage_path: pub.publicUrl });
+        } else {
+          const content = (await readText(f)).slice(0, 8000);
+          await sourcesRepo.create({ client_id: client.id, type: "text", name: f.name, size: f.size, content });
+        }
+      } catch (err) { console.error("Error subiendo fuente:", err); }
+    }
+    setSrcUploading(false);
+    if (e.target) e.target.value = "";
+    sourcesRepo.listByClient(client.id).then(setSources);
+  };
+
+  const deleteSrc = async (id: string) => {
+    await sourcesRepo.remove(id);
+    if (client) sourcesRepo.listByClient(client.id).then(setSources);
   };
 
   if (!segment) return <div style={{ color: C.textMuted }}>Cargando segmento...</div>;
@@ -440,23 +484,61 @@ export function SegmentDetail({ segmentId, campaign, client, onBack }: Props) {
         {/* SOURCES TAB */}
         {tab === "sources" && (
           <div>
-            <div style={{ fontSize: "13px", color: C.textMd, marginBottom: "16px", padding: "10px 14px", background: C.infoBg, borderRadius: "8px" }}>
-              Las fuentes del cliente se usan automáticamente al generar mensajes. Edítalas desde el panel del cliente.
-            </div>
-            {sources.length === 0 ? (
-              <div style={card({ textAlign: "center", padding: "40px" })}>
-                <div style={{ fontSize: "14px", color: C.textMuted }}>Sin fuentes configuradas para este cliente.</div>
+            {!client && (
+              <div style={{ fontSize: "13px", color: C.textMuted, padding: "10px 14px", background: C.warnBg, borderRadius: "8px", marginBottom: "16px" }}>
+                Sin cliente asociado — no se pueden gestionar fuentes.
               </div>
-            ) : (
-              sources.map(s => (
-                <div key={s.id} style={card({ marginBottom: "8px", display: "flex", alignItems: "center", gap: "12px" })}>
-                  <Badge color={s.type === "url" ? "blue" : s.type === "pdf" ? "red" : "amber"}>{s.type}</Badge>
-                  <div style={{ flex: 1, fontSize: "13px", color: C.textMd, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.type === "url" ? s.url : s.name}
+            )}
+            {client && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+                  <div style={{ background: C.pageBg, border: "1px solid " + C.border, borderRadius: "8px", padding: "12px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>Agregar URL</div>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input
+                        style={{ ...INP, fontSize: "12px", padding: "7px 10px" }}
+                        value={newSrcUrl}
+                        onChange={e => setNewSrcUrl(e.target.value)}
+                        placeholder="https://empresa.com"
+                        onKeyDown={e => e.key === "Enter" && addSrcUrl()}
+                      />
+                      <Btn v="purple" onClick={addSrcUrl} style={{ padding: "7px 12px", fontSize: "13px" }}>+</Btn>
+                    </div>
                   </div>
-                  {s.type === "url" && <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: "11px", color: C.info }}>Abrir →</a>}
+                  <div style={{ background: C.pageBg, border: "1px solid " + C.border, borderRadius: "8px", padding: "12px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>Subir documentos</div>
+                    <div
+                      onClick={() => srcDocRef.current?.click()}
+                      style={{ border: "2px dashed " + C.borderMd, borderRadius: "6px", padding: "8px", textAlign: "center", cursor: "pointer", fontSize: "12px", color: C.textMuted }}
+                    >
+                      {srcUploading ? "Procesando..." : "PDF / TXT (múltiples archivos)"}
+                    </div>
+                    <input ref={srcDocRef} type="file" accept=".pdf,.txt,.md" multiple style={{ display: "none" }} onChange={handleSrcDoc} />
+                  </div>
                 </div>
-              ))
+
+                {sources.length === 0 ? (
+                  <div style={card({ textAlign: "center", padding: "40px" })}>
+                    <div style={{ fontSize: "14px", color: C.textMuted }}>Sin fuentes — agrega URLs o documentos arriba.</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: "12px", color: C.textMuted, marginBottom: "10px" }}>
+                      {sources.length} fuente{sources.length !== 1 ? "s" : ""} · se usan automáticamente al generar mensajes
+                    </div>
+                    {sources.map(s => (
+                      <div key={s.id} style={card({ marginBottom: "8px", display: "flex", alignItems: "center", gap: "12px" })}>
+                        <Badge color={s.type === "url" ? "blue" : s.type === "pdf" ? "red" : "amber"}>{s.type}</Badge>
+                        <div style={{ flex: 1, fontSize: "13px", color: C.textMd, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.type === "url" ? s.url : s.name}
+                        </div>
+                        {s.type === "url" && <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: "11px", color: C.info }}>Abrir →</a>}
+                        <Btn v="danger" onClick={() => deleteSrc(s.id)}>×</Btn>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
