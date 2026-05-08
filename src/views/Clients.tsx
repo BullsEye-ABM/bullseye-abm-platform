@@ -224,6 +224,7 @@ function ClientPanel({
   const [sources, setSources] = useState<BullseyeSource[]>([]);
   const [newUrl, setNewUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [srcErr, setSrcErr] = useState<string | null>(null);
   const docRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -233,31 +234,40 @@ function ClientPanel({
   const refresh = () => sourcesRepo.listByClient(client.id).then(setSources);
 
   const addUrl = async () => {
-    if (!newUrl.trim()) return;
-    const url = newUrl.startsWith("http") ? newUrl : "https://" + newUrl;
-    await sourcesRepo.create({
-      client_id: client.id,
-      type: "url",
-      name: url.replace(/^https?:\/\//, "").split("/")[0],
-      url,
-    });
-    setNewUrl("");
-    refresh();
+    const raw = newUrl.trim();
+    if (!raw) return;
+    setSrcErr(null);
+    const lines = raw.split(/\n/).map(l => l.trim()).filter(Boolean);
+    try {
+      for (const line of lines) {
+        const url = line.startsWith("http") ? line : "https://" + line;
+        await sourcesRepo.create({
+          client_id: client.id,
+          type: "url",
+          name: url.replace(/^https?:\/\//, "").split("/")[0],
+          url,
+        });
+      }
+      setNewUrl("");
+      refresh();
+    } catch (err: unknown) {
+      setSrcErr("Error al guardar URL: " + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const handleDoc = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    setSrcErr(null);
     setUploading(true);
+    const errors: string[] = [];
     for (const f of files) {
       try {
-        if (f.name.endsWith(".pdf")) {
-          // Subir a Supabase Storage
+        if (f.name.toLowerCase().endsWith(".pdf")) {
           const path = `bullseye-pdfs/${client.id}/${Date.now()}-${f.name}`;
           const { error: upErr } = await supabase.storage.from("bullseye-sources").upload(path, f);
           if (upErr) {
-            // Si el bucket no existe aún, lo decimos en consola — el user crea el bucket en Supabase
-            console.warn("Sube primero el bucket 'bullseye-sources' en Supabase Storage:", upErr);
+            errors.push(`${f.name}: ${upErr.message}`);
             continue;
           }
           const { data: pub } = supabase.storage.from("bullseye-sources").getPublicUrl(path);
@@ -265,7 +275,6 @@ function ClientPanel({
             client_id: client.id, type: "pdf", name: f.name, size: f.size,
             storage_path: pub.publicUrl,
           });
-          // Force readBase64 import to remain (used for non-pdf preview if needed)
           void readBase64;
         } else {
           const content = (await readText(f)).slice(0, 8000);
@@ -273,18 +282,23 @@ function ClientPanel({
             client_id: client.id, type: "text", name: f.name, size: f.size, content,
           });
         }
-      } catch (err) {
-        console.error("Error uploading", err);
+      } catch (err: unknown) {
+        errors.push(`${f.name}: ` + (err instanceof Error ? err.message : String(err)));
       }
     }
     setUploading(false);
     if (e.target) e.target.value = "";
+    if (errors.length) setSrcErr("Errores al subir:\n" + errors.join("\n"));
     refresh();
   };
 
   const deleteSrc = async (id: string) => {
-    await sourcesRepo.remove(id);
-    refresh();
+    try {
+      await sourcesRepo.remove(id);
+      refresh();
+    } catch (err: unknown) {
+      setSrcErr("Error al eliminar: " + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const sH = {
@@ -328,29 +342,38 @@ function ClientPanel({
       <div style={{ padding: "16px 20px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
           <div style={{ background: C.pageBg, border: "1px solid " + C.border, borderRadius: "8px", padding: "12px" }}>
-            <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>URL</div>
-            <div style={{ display: "flex", gap: "6px" }}>
-              <input
-                style={{ ...INP, fontSize: "12px", padding: "7px 10px" }}
+            <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>
+              URLs <span style={{ fontWeight: 400, color: C.textFaint }}>(una por línea)</span>
+            </div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "flex-start" }}>
+              <textarea
+                style={{ ...INP, fontSize: "12px", padding: "7px 10px", height: "64px", resize: "none" }}
                 value={newUrl}
                 onChange={e => setNewUrl(e.target.value)}
-                placeholder="https://empresa.com"
-                onKeyDown={e => e.key === "Enter" && addUrl()}
+                placeholder={"https://empresa.com\nhttps://empresa.com/blog"}
               />
-              <Btn v="purple" onClick={addUrl} style={{ padding: "7px 10px", fontSize: "12px" }}>+</Btn>
+              <Btn v="purple" onClick={addUrl} style={{ padding: "7px 10px", fontSize: "12px", flexShrink: 0 }}>+</Btn>
             </div>
           </div>
           <div style={{ background: C.pageBg, border: "1px solid " + C.border, borderRadius: "8px", padding: "12px" }}>
-            <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>Documentos</div>
+            <div style={{ fontSize: "12px", fontWeight: 600, color: C.textMd, marginBottom: "8px" }}>
+              Documentos <span style={{ fontWeight: 400, color: C.textFaint }}>(PDF / TXT, múltiples)</span>
+            </div>
             <div onClick={() => docRef.current?.click()} style={{
-              border: "2px dashed " + C.borderMd, borderRadius: "6px", padding: "8px",
+              border: "2px dashed " + C.borderMd, borderRadius: "6px", padding: "14px 8px",
               textAlign: "center", cursor: "pointer", fontSize: "12px", color: C.textMuted,
             }}>
-              {uploading ? "Procesando..." : "Subir PDF / TXT"}
+              {uploading ? "Procesando..." : "Haz clic o arrastra archivos aquí"}
             </div>
             <input ref={docRef} type="file" accept=".pdf,.txt,.md" multiple style={{ display: "none" }} onChange={handleDoc} />
           </div>
         </div>
+        {srcErr && (
+          <div style={{ padding: "10px 12px", background: "#FFF5F5", border: "1px solid #FACCCC", borderRadius: "8px", fontSize: "12px", color: "#C0392B", marginBottom: "10px", whiteSpace: "pre-wrap" }}>
+            {srcErr}
+            <button onClick={() => setSrcErr(null)} style={{ float: "right", background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: "14px" }}>×</button>
+          </div>
+        )}
         {sources.map(s => (
           <div key={s.id} style={{
             display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px",
@@ -368,7 +391,7 @@ function ClientPanel({
   );
 }
 
-// ─── LemlistKeyModal: setear/borrar API key Lemlist por cliente ───────────────
+// ─── LemlistKeyModal: setear/borrar API key Lemlist por cliente ─────────────────
 function LemlistKeyModal({
   client, onClose, onSaved,
 }: {
