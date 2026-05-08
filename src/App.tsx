@@ -3,12 +3,13 @@ import { Dashboard } from "./views/Dashboard";
 import { ClientsView } from "./views/Clients";
 import { CampaignView } from "./views/Campaign";
 import { SettingsView } from "./views/Settings";
+import { SimulatorModule } from "./views/SimulatorModule";
 import { GenIndicator } from "./components/ui";
 import { C, FF } from "./lib/utils";
 import { clientsRepo, campaignsRepo } from "./lib/db";
 import type { Client, BullseyeCampaign } from "./types/db";
 
-type Page = "dashboard" | "clients" | "campaign" | "settings";
+type Page = "dashboard" | "clients" | "campaign" | "simulator" | "settings";
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -42,9 +43,10 @@ export default function App() {
   }, [page]);
 
   const nav: { k: Page; l: string; icon: string }[] = [
-    { k: "dashboard", l: "Dashboard", icon: "▦" },
-    { k: "clients",   l: "Clientes",  icon: "◉" },
-    { k: "settings",  l: "Configuración", icon: "⚙" },
+    { k: "dashboard",  l: "Dashboard",    icon: "▦" },
+    { k: "clients",    l: "Clientes",     icon: "◉" },
+    { k: "simulator",  l: "Simulador",    icon: "⚡" },
+    { k: "settings",   l: "Configuración", icon: "⚙" },
   ];
 
   if (!loaded) {
@@ -128,6 +130,7 @@ export default function App() {
             onBack={() => setPage("clients")}
           />
         )}
+        {page === "simulator" && <SimulatorModule />}
         {page === "settings" && <SettingsView />}
       </div>
     </div>

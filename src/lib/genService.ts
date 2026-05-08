@@ -389,3 +389,58 @@ export async function simulateMessages(
   if (!m) throw new Error("La IA no devolvió JSON válido en la simulación");
   return JSON.parse(m[0]) as SimulationResult;
 }
+
+// ─── Simulate a raw sequence (standalone simulator) ─────────────────────────────────
+export async function simulateSequence(
+  sequenceText: string,
+  sequencePdf: { content: string; name: string } | null,
+  channels: string[],
+  objective: string,
+  industry: string,
+  role: string,
+): Promise<SimulationResult> {
+  const chanList = channels.join(", ");
+
+  const prompt = [
+    "Eres experto en evaluación de secuencias de outreach B2B. Simula la reacción realista de una audiencia virtual.",
+    "",
+    "PARÁMETROS:",
+    `Objetivo: ${objective || "No especificado"}`,
+    `Industria: ${industry || "B2B"}`,
+    `Rol objetivo: ${role || "Decisor"}`,
+    `Canales activos: ${chanList}`,
+    "",
+    sequencePdf
+      ? "SECUENCIA: ver documento PDF adjunto."
+      : `SECUENCIA DE OUTREACH:\n${sequenceText.slice(0, 4000)}`,
+    "",
+    "TAREA:",
+    "1. Crea 6 perfiles ficticios representativos del rol y la industria indicados.",
+    "2. Simula cómo cada perfil reaccionaría a esta secuencia de outreach.",
+    "3. Calcula métricas realistas vs benchmarks B2B (LinkedIn ~25-45% apertura, email ~20-35%, respuesta típica 5-20%).",
+    "4. Genera insights concretos y accionables. Sé crítico y honesto.",
+    "",
+    "Responde SOLO con JSON válido (sin bloques markdown):",
+    `{"open_rate":35,"response_rate":12,"interest_score":58,"interest_level":"medio","reactions":[{"contact_name":"Nombre Ficticio","channel":"linkedin","opens":true,"responds":false,"interest":"medio","comment":"Comentario específico de 1 oración"}],"insights":{"strengths":["punto fuerte 1","punto fuerte 2"],"weaknesses":["debilidad 1","debilidad 2"],"suggestions":["sugerencia accionable 1","sugerencia accionable 2","sugerencia accionable 3"]}}`,
+  ].join("\n");
+
+  const messageContent = sequencePdf
+    ? [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: sequencePdf.content },
+          title: sequencePdf.name,
+        },
+        { type: "text", text: prompt },
+      ]
+    : [{ type: "text", text: prompt }];
+
+  const resp = await callAnthropic({
+    messages: [{ role: "user", content: messageContent }],
+    max_tokens: 3000,
+  });
+
+  const m2 = resp.text.match(/\{[\s\S]*\}/);
+  if (!m2) throw new Error("La IA no devolvió JSON válido en la simulación de secuencia");
+  return JSON.parse(m2[0]) as SimulationResult;
+}
