@@ -8,6 +8,7 @@ import type {
   BullseyeCampaign,
   BullseyeSegment,
   BullseyeSource,
+  BullseyeMessage,
   Client,
   Channel,
 } from "../types/db";
@@ -291,4 +292,90 @@ export function isErrorMsg(m: { linkedin?: string[]; email?: { subject?: string;
   const emOk = m.email?.some(e => e?.body && e.body.trim() !== "" && e.subject !== "Error");
   const waOk = m.whatsapp?.some(x => x && !x.startsWith("[Error") && x.trim() !== "");
   return !liOk && !emOk && !waOk;
+}
+
+// ─── Simulation ───────────────────────────────────────────────────────────────
+export interface SimulationReaction {
+  contact_name: string;
+  channel: string;
+  opens: boolean;
+  responds: boolean;
+  interest: "bajo" | "medio" | "alto";
+  comment: string;
+}
+
+export interface SimulationResult {
+  open_rate: number;
+  response_rate: number;
+  interest_score: number;
+  interest_level: "bajo" | "medio" | "alto";
+  reactions: SimulationReaction[];
+  insights: {
+    strengths: string[];
+    weaknesses: string[];
+    suggestions: string[];
+  };
+}
+
+export async function simulateMessages(
+  messages: BullseyeMessage[],
+  contacts: BullseyeContact[],
+  persona: { name: string; title: string; summary: string; pains: string[]; motivations: string[]; objections: string[] } | null,
+  campaign: BullseyeCampaign,
+): Promise<SimulationResult> {
+  const validMessages = messages.filter(m => !isErrorMsg(m));
+  const sample = validMessages.slice(0, 6);
+  const chans = (campaign.channels || ["linkedin", "email"]) as Channel[];
+
+  const messagesCtx = sample.map(msg => {
+    const contact = contacts.find(c => c.id === msg.contact_id);
+    const lines: string[] = [`Contacto: ${contact?.name || "?"} (${contact?.title || "?"}, ${contact?.company || "?"})`];
+    if (chans.includes("linkedin") && msg.linkedin?.[0]) lines.push(`LinkedIn: ${msg.linkedin[0].slice(0, 200)}`);
+    if (chans.includes("email") && msg.email?.[0]) {
+      lines.push(`Email asunto: ${msg.email[0].subject}`);
+      lines.push(`Email cuerpo: ${msg.email[0].body.slice(0, 300)}`);
+    }
+    if (chans.includes("whatsapp") && msg.whatsapp?.[0]) lines.push(`WhatsApp: ${msg.whatsapp[0].slice(0, 200)}`);
+    return lines.join("\n");
+  }).join("\n\n---\n\n");
+
+  const personaCtx = persona
+    ? [
+        `Nombre: ${persona.name}`,
+        `Cargo: ${persona.title}`,
+        `Resumen: ${persona.summary}`,
+        `Pain Points: ${persona.pains.join(", ")}`,
+        `Motivaciones: ${persona.motivations.join(", ")}`,
+        `Objeciones: ${persona.objections.join(", ")}`,
+      ].join("\n")
+    : `Perfil objetivo: ${campaign.role || "decisor"} en industria ${campaign.industry || "B2B"}`;
+
+  const prompt = [
+    "Eres un experto en evaluación de mensajes de outreach B2B. Simula la reacción realista de una audiencia virtual.",
+    "",
+    "BUYER PERSONA (representa la audiencia virtual que recibirá estos mensajes):",
+    personaCtx,
+    "",
+    `CAMPAÑA: objetivo=${campaign.goal || ""}, industria=${campaign.industry || ""}, rol objetivo=${campaign.role || ""}`,
+    "",
+    `MENSAJES DE OUTREACH (${sample.length} muestras de contactos reales):`,
+    messagesCtx,
+    "",
+    "TAREA: Simula cómo reaccionaría esta audiencia virtual a estos mensajes.",
+    "Calcula métricas realistas comparadas con benchmarks B2B (LinkedIn ~25-45% apertura, email ~20-35%, respuesta típica 5-20%).",
+    "Sé crítico y honesto. Para cada reacción, evalúa el mensaje del canal más representativo.",
+    "Los insights deben ser concretos y accionables, no genéricos.",
+    "",
+    "Responde SOLO con JSON válido (sin bloques markdown):",
+    `{"open_rate":35,"response_rate":12,"interest_score":58,"interest_level":"medio","reactions":[{"contact_name":"Nombre del contacto","channel":"linkedin","opens":true,"responds":false,"interest":"medio","comment":"Comentario específico de 1 oración"}],"insights":{"strengths":["punto fuerte concreto 1","punto fuerte concreto 2"],"weaknesses":["debilidad concreta 1","debilidad concreta 2"],"suggestions":["sugerencia accionable 1","sugerencia accionable 2","sugerencia accionable 3"]}}`,
+  ].join("\n");
+
+  const resp = await callAnthropic({
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 3000,
+  });
+
+  const m = resp.text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("La IA no devolvió JSON válido en la simulación");
+  return JSON.parse(m[0]) as SimulationResult;
 }
