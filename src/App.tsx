@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dashboard } from "./views/Dashboard";
 import { ClientsView } from "./views/Clients";
 import { CampaignView } from "./views/Campaign";
@@ -11,6 +11,210 @@ import type { Client, BullseyeCampaign } from "./types/db";
 
 type Page = "dashboard" | "clients" | "campaign" | "simulator" | "settings";
 
+// ─── Quick-nav palette ──────────────────────────────────────────────────────────────────────────────
+function QuickNavPalette({
+  clients,
+  campaigns,
+  onSelect,
+  onClose,
+}: {
+  clients: Client[];
+  campaigns: BullseyeCampaign[];
+  onSelect: (campaignId: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [step, setStep] = useState<"clients" | "campaigns">("clients");
+  const [pickedClient, setPickedClient] = useState<Client | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (step === "campaigns") { setStep("clients"); setPickedClient(null); setQuery(""); }
+        else onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [step, onClose]);
+
+  const q = query.toLowerCase().trim();
+
+  const searchResults = q
+    ? campaigns.filter(c => {
+        const cl = clients.find(cl => cl.id === c.client_id);
+        return c.name.toLowerCase().includes(q) || (cl?.name || "").toLowerCase().includes(q);
+      })
+    : [];
+
+  const clientList = q
+    ? clients.filter(cl => cl.name.toLowerCase().includes(q))
+    : clients;
+
+  const campaignList = pickedClient
+    ? campaigns.filter(c => c.client_id === pickedClient.id)
+    : [];
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 100,
+        background: "rgba(15,10,40,0.45)", backdropFilter: "blur(2px)",
+        display: "flex", alignItems: "flex-start", justifyContent: "center",
+        paddingTop: "80px",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: "480px", background: C.white, borderRadius: "14px",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          overflow: "hidden", fontFamily: FF,
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid " + C.border, display: "flex", alignItems: "center", gap: "10px" }}>
+          {step === "campaigns" && pickedClient && (
+            <button
+              onClick={() => { setStep("clients"); setPickedClient(null); setQuery(""); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: "16px", padding: "0 4px", lineHeight: 1 }}
+            >←</button>
+          )}
+          <span style={{ fontSize: "14px" }}>🔍</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={
+              step === "campaigns" && pickedClient
+                ? `Buscar campaña en ${pickedClient.name}...`
+                : "Buscar cliente o campaña..."
+            }
+            style={{
+              flex: 1, border: "none", outline: "none", fontSize: "14px",
+              color: C.text, background: "transparent", fontFamily: FF,
+            }}
+          />
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.textFaint, fontSize: "16px", lineHeight: 1 }}>✕</button>
+        </div>
+
+        {/* Results */}
+        <div style={{ maxHeight: "380px", overflowY: "auto", padding: "8px" }}>
+
+          {/* Search mode: flat results */}
+          {q && step === "clients" && (
+            <>
+              {searchResults.length === 0 && clientList.length === 0 && (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "13px", color: C.textFaint }}>
+                  Sin resultados para "{query}"
+                </div>
+              )}
+              {searchResults.map(c => {
+                const cl = clients.find(cl => cl.id === c.client_id);
+                return (
+                  <HoverRow key={c.id} onClick={() => { onSelect(c.id); onClose(); }}>
+                    <div style={{ fontSize: "13px", flex: 1 }}>
+                      <span style={{ color: C.textMuted, marginRight: "6px", fontSize: "11px" }}>{cl?.name}</span>
+                      <span style={{ fontWeight: 500, color: C.text }}>›</span>
+                      <span style={{ fontWeight: 600, color: C.text, marginLeft: "6px" }}>{c.name}</span>
+                    </div>
+                    <span style={{ fontSize: "11px", color: C.textFaint }}>abrir →</span>
+                  </HoverRow>
+                );
+              })}
+            </>
+          )}
+
+          {/* Step 1: client list */}
+          {step === "clients" && !q && (
+            <>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", padding: "4px 14px 8px" }}>
+                Clientes
+              </div>
+              {clientList.map(cl => {
+                const count = campaigns.filter(c => c.client_id === cl.id).length;
+                const ini = cl.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
+                return (
+                  <HoverRow key={cl.id} onClick={() => { setPickedClient(cl); setStep("campaigns"); setQuery(""); }}>
+                    <div style={{
+                      width: "28px", height: "28px", borderRadius: "7px", background: C.accentBg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: "11px", fontWeight: 700, color: C.accent, flexShrink: 0,
+                    }}>{ini}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: "13px", fontWeight: 600, color: C.text }}>{cl.name}</div>
+                      <div style={{ fontSize: "11px", color: C.textFaint }}>{cl.industry || "Sin industria"} · {count} campaña{count !== 1 ? "s" : ""}</div>
+                    </div>
+                    <span style={{ color: C.textFaint, fontSize: "13px" }}>›</span>
+                  </HoverRow>
+                );
+              })}
+              {clientList.length === 0 && (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "13px", color: C.textFaint }}>Sin clientes</div>
+              )}
+            </>
+          )}
+
+          {/* Step 2: campaign list for picked client */}
+          {step === "campaigns" && pickedClient && (
+            <>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", padding: "4px 14px 8px" }}>
+                Campañas · {pickedClient.name}
+              </div>
+              {campaignList
+                .filter(c => !q || c.name.toLowerCase().includes(q))
+                .map(c => (
+                  <HoverRow key={c.id} onClick={() => { onSelect(c.id); onClose(); }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: "13px", fontWeight: 600, color: C.text }}>{c.name}</div>
+                      <div style={{ fontSize: "11px", color: C.textFaint }}>
+                        {c.industry || ""}{c.role ? ` · ${c.role}` : ""}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: "11px", fontWeight: 600, padding: "2px 7px", borderRadius: "4px",
+                      background: c.status === "active" ? C.successBg : C.accentBg,
+                      color: c.status === "active" ? C.success : C.accent,
+                    }}>{c.status}</span>
+                  </HoverRow>
+                ))}
+              {campaignList.length === 0 && (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "13px", color: C.textFaint }}>Sin campañas</div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: "8px 16px", borderTop: "1px solid " + C.border, fontSize: "11px", color: C.textFaint, display: "flex", gap: "16px" }}>
+          <span>↵ abrir</span>
+          <span>Esc {step === "campaigns" ? "volver" : "cerrar"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HoverRow({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: "10px",
+        padding: "9px 14px", borderRadius: "7px", cursor: "pointer",
+        background: hover ? C.accentBg : "transparent",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
@@ -18,6 +222,19 @@ export default function App() {
   const [campaigns, setCampaigns] = useState<BullseyeCampaign[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showQuickNav, setShowQuickNav] = useState(false);
+
+  // Atajo de teclado Ctrl+K / Cmd+K para abrir quick-nav
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setShowQuickNav(v => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Detectar deep-link desde el prospector: ?campaign=<uuid>
   useEffect(() => {
@@ -105,10 +322,34 @@ export default function App() {
             );
           })}
         </nav>
-        <div style={{ padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "11px", color: "rgba(255,255,255,0.3)" }}>
+        <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <button
+            onClick={() => setShowQuickNav(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: "8px", width: "100%",
+              background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: "8px", padding: "8px 12px", cursor: "pointer",
+              color: "rgba(255,255,255,0.55)", fontSize: "12px", fontFamily: FF,
+            }}
+          >
+            <span>🔍</span>
+            <span style={{ flex: 1, textAlign: "left" }}>Ir a campaña...</span>
+            <span style={{ fontSize: "10px", opacity: 0.6, background: "rgba(255,255,255,0.1)", borderRadius: "4px", padding: "1px 5px" }}>⌘K</span>
+          </button>
+        </div>
+        <div style={{ padding: "10px 20px", borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: "11px", color: "rgba(255,255,255,0.3)" }}>
           v0.1 · {clients.length} clientes
         </div>
       </div>
+
+      {showQuickNav && (
+        <QuickNavPalette
+          clients={clients}
+          campaigns={campaigns}
+          onSelect={(id) => { setActiveCampaignId(id); setPage("campaign"); }}
+          onClose={() => setShowQuickNav(false)}
+        />
+      )}
 
       {/* Main */}
       <div style={{ marginLeft: "220px", flex: 1, padding: "32px", maxWidth: "1100px" }}>
