@@ -40,6 +40,7 @@ export function ClientsView({ onSelectCampaign }: Props) {
   const [showNewCampForClient, setShowNewCampForClient] = useState<string | null>(null);
   const [showLemlistKeyFor, setShowLemlistKeyFor] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [cf, setCf] = useState<ClientFormData>(blankClient);
   const [pf, setPf] = useState<CampaignFormData>(blankCampaign);
 
@@ -94,14 +95,25 @@ export function ClientsView({ onSelectCampaign }: Props) {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "28px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
         <div>
           <div style={{ fontSize: "22px", fontWeight: 700, color: C.text }}>Clientes</div>
           <div style={{ fontSize: "14px", color: C.textMuted }}>
             {clients.length} cuenta{clients.length !== 1 ? "s" : ""}
           </div>
         </div>
-        <Btn v="primary" onClick={() => setShowNewClient(true)}>+ Nuevo cliente</Btn>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: C.textFaint, fontSize: "13px", pointerEvents: "none" }}>🔍</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Buscar cliente..."
+              style={{ ...INP, paddingLeft: "30px", width: "200px", height: "34px" }}
+            />
+          </div>
+          <Btn v="primary" onClick={() => setShowNewClient(true)}>+ Nuevo cliente</Btn>
+        </div>
       </div>
 
       {clients.length === 0 && (
@@ -113,7 +125,11 @@ export function ClientsView({ onSelectCampaign }: Props) {
         </div>
       )}
 
-      {clients.map(cl => {
+      {clients.filter(cl => {
+        if (!search.trim()) return true;
+        const q = search.toLowerCase();
+        return cl.name.toLowerCase().includes(q) || (cl.industry || "").toLowerCase().includes(q);
+      }).map(cl => {
         const clC = campaigns.filter(c => c.client_id === cl.id);
         const isExp = expanded === cl.id;
         const ini = cl.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
