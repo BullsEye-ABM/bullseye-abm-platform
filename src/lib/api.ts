@@ -31,14 +31,21 @@ export async function callAnthropic(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: body.model || "claude-sonnet-4-20250514",
+        model: body.model || "claude-sonnet-4-6",
         max_tokens: body.max_tokens || 2000,
         ...body,
       }),
       signal: controller.signal,
     });
     clearTimeout(timer);
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    if (!res.ok) {
+      let detail = "HTTP " + res.status;
+      try {
+        const errBody = await res.json();
+        detail = errBody?.error?.message || errBody?.error || detail;
+      } catch { /* keep default */ }
+      throw new Error(detail);
+    }
     const data = await res.json();
     if (data.error) throw new Error(data.error.message || data.error);
 
