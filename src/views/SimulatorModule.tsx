@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { simulateSequence, type SimulationResult } from "../lib/genService";
+import { simulateSequence, applySequenceSuggestions, type SimulationResult } from "../lib/genService";
 import { readBase64, readText, C, FF, uid } from "../lib/utils";
 import { Badge, Btn, INP, LBL, TD, TH, card } from "../components/ui";
 
@@ -46,6 +46,11 @@ export function SimulatorModule() {
   const [simResult, setSimResult] = useState<SimulationResult | null>(null);
   const [simErr, setSimErr] = useState<string | null>(null);
 
+  // Apply suggestions state
+  const [applyLoading, setApplyLoading] = useState(false);
+  const [improvedSequence, setImprovedSequence] = useState<string | null>(null);
+  const [applyErr, setApplyErr] = useState<string | null>(null);
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (f: File) => {
@@ -91,6 +96,23 @@ export function SimulatorModule() {
     setSimLoading(false);
   };
 
+  const handleApplySuggestions = async (result: SimulationResult) => {
+    if (applyLoading) return;
+    setApplyLoading(true);
+    setApplyErr(null);
+    setImprovedSequence(null);
+    try {
+      const improved = await applySequenceSuggestions(
+        sequenceText, sequencePdf, result.insights.suggestions || [],
+        channels, objective, industry, role,
+      );
+      setImprovedSequence(improved);
+    } catch (e: unknown) {
+      setApplyErr("Error al aplicar sugerencias: " + (e instanceof Error ? e.message : String(e)));
+    }
+    setApplyLoading(false);
+  };
+
   const handleSave = () => {
     if (!simResult) return;
     const label = [
@@ -125,9 +147,13 @@ export function SimulatorModule() {
     setSequenceText(""); setSequencePdf(null);
     setObjective(""); setIndustry(""); setRole("");
     setChannels(["linkedin", "email"]);
+    setImprovedSequence(null); setApplyErr(null);
   };
 
-  const viewSaved = (sim: SavedSim) => { setSelected(sim); setMode("view"); setSimResult(null); };
+  const viewSaved = (sim: SavedSim) => {
+    setSelected(sim); setMode("view"); setSimResult(null);
+    setImprovedSequence(null); setApplyErr(null);
+  };
 
   const resultToShow = mode === "view" && selected ? selected.result : simResult;
   const canSave = mode === "new" && simResult !== null;
@@ -393,7 +419,7 @@ export function SimulatorModule() {
             )}
 
             {/* Insights */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px", marginBottom: "20px" }}>
               <div style={card({ borderTop: "3px solid " + C.success })}>
                 <div style={{ fontSize: "11px", fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>Puntos Fuertes</div>
                 {(resultToShow.insights.strengths || []).map((s, i) => (
@@ -419,6 +445,49 @@ export function SimulatorModule() {
                 ))}
               </div>
             </div>
+
+            {/* Apply suggestions */}
+            {mode === "new" && simResult && (
+              <div style={card({ background: C.infoBg, border: "1px solid " + C.info + "44", marginBottom: "16px" })}>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: C.text, marginBottom: "6px" }}>
+                  Aplicar sugerencias y mejorar secuencia
+                </div>
+                <div style={{ fontSize: "12px", color: C.textMd, marginBottom: "16px", lineHeight: 1.6 }}>
+                  Reescribe automáticamente la secuencia incorporando las {(simResult.insights.suggestions || []).length} sugerencias
+                  identificadas por la simulación.
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <Btn v="primary" onClick={() => handleApplySuggestions(simResult)} disabled={applyLoading}>
+                    {applyLoading ? "Reescribiendo..." : "Aplicar sugerencias"}
+                  </Btn>
+                  {improvedSequence && !applyLoading && (
+                    <span style={{ fontSize: "12px", color: C.success, fontWeight: 600 }}>✓ Secuencia mejorada lista</span>
+                  )}
+                </div>
+                {applyErr && (
+                  <div style={{ marginTop: "12px", fontSize: "12px", color: "#C0392B" }}>{applyErr}</div>
+                )}
+              </div>
+            )}
+
+            {/* Improved sequence output */}
+            {improvedSequence && !applyLoading && (
+              <div style={card({ marginBottom: "16px" })}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ color: C.success }}>✨</span> Secuencia mejorada
+                </div>
+                <textarea
+                  readOnly
+                  value={improvedSequence}
+                  style={{ ...INP, height: "300px", resize: "vertical", fontFamily: FF, background: C.pageBg, cursor: "text" }}
+                />
+                <div style={{ marginTop: "10px" }}>
+                  <Btn v="outline" onClick={() => { navigator.clipboard.writeText(improvedSequence); }}>
+                    Copiar al portapapeles
+                  </Btn>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

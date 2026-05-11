@@ -49,67 +49,67 @@ function buildPrompt(
       title: s.name,
     }));
 
-  const urlCtx = sources.filter(s => s.type === "url").map(s => "Web: " + s.url).join("\n");
-  const txtCtx = sources
-    .filter(s => s.type === "text")
-    .map(s => (s.content || "").slice(0, 400))
-    .join("\n");
+  const urlSources = sources.filter(s => s.type === "url" && s.storage_path);
+  const useSearch = urlSources.length > 0;
 
-  const segCtx = `Segmento: ${segment.name}${segment.criteria ? " (" + segment.criteria + ")" : ""}`;
-  const chans = (campaign.channels || ["linkedin", "email"]) as Channel[];
-  const mpc = campaign.msgs_per_channel || ({} as Record<Channel, number>);
-  const nLi = chans.includes("linkedin") ? mpc.linkedin || 1 : 0;
-  const nEm = chans.includes("email") ? mpc.email || 1 : 0;
-  const nWa = chans.includes("whatsapp") ? mpc.whatsapp || 1 : 0;
+  const parts: string[] = [
+    `Eres un experto en outreach B2B hiperpersonalizado para la empresa "${client?.name || "cliente"}".`,
+    "",
+  ];
 
-  const researchLines: string[] = [];
-  if (contact.website) researchLines.push("- Web empresa: " + contact.website);
-  if (contact.linkedin) researchLines.push("- LinkedIn: " + contact.linkedin);
-  if (contact.company && !contact.website) researchLines.push("- Busca noticias de: " + contact.company);
-  const researchCtx = researchLines.length
-    ? "INVESTIGACION PREVIA: Usa web_search:\n" + researchLines.join("\n") + "\nMenciona algo especifico encontrado."
-    : "";
-  const useSearch = researchLines.length > 0;
+  if (client?.description) parts.push(`Descripción de ${client.name}: ${client.description}`, "");
 
-  const liEx = nLi === 1 ? '["msg"]' : "[" + Array.from({ length: nLi }, () => '""').join(",") + "]";
-  const emEx = "[" + Array.from({ length: nEm }, () => '{"subject":"...","body":"..."}').join(",") + "]";
-  const waEx = nWa === 1 ? '["msg"]' : "[" + Array.from({ length: nWa }, () => '""').join(",") + "]";
-  const jsonShape = [
-    nLi > 0 ? '"linkedin":' + liEx : null,
-    nEm > 0 ? '"email":' + emEx : null,
-    nWa > 0 ? '"whatsapp":' + waEx : null,
-  ].filter(Boolean).join(",");
+  parts.push(
+    `CAMPAÑA: ${campaign.name}`,
+    campaign.objective ? `Objetivo: ${campaign.objective}` : "",
+    campaign.icp ? `ICP: ${campaign.icp}` : "",
+    "",
+    `SEGMENTO: ${segment.name}`,
+    segment.description ? `Descripción del segmento: ${segment.description}` : "",
+    "",
+    `CONTACTO:`,
+    `Nombre: ${contact.name}`,
+    contact.title ? `Cargo: ${contact.title}` : "",
+    contact.company ? `Empresa: ${contact.company}` : "",
+    contact.industry ? `Industria: ${contact.industry}` : "",
+    contact.location ? `Ubicación: ${contact.location}` : "",
+    contact.linkedin_url ? `LinkedIn: ${contact.linkedin_url}` : "",
+    contact.email ? `Email: ${contact.email}` : "",
+    "",
+  );
 
-  const chanInstr = [
-    nLi > 0 ? `LinkedIn: ${nLi} msg(s) max 280c` : null,
-    nEm > 0 ? `Email: ${nEm} msg(s) asunto max 8 palabras cuerpo max 120 palabras` : null,
-    nWa > 0 ? `WhatsApp: ${nWa} msg(s) max 150c` : null,
-  ].filter(Boolean).join(" | ");
+  if (pdfDocs.length > 0) {
+    parts.push("FUENTES DE CONOCIMIENTO: Ver documentos PDF adjuntos.", "");
+  }
 
-  const prompt = [
-    "Eres experto en ABM B2B hiperpersonalizado. Genera mensajes de outreach.",
-    `Contacto: nombre=${contact.name || ""}, cargo=${contact.title || ""}, empresa=${contact.company || ""}` +
-      (contact.country ? `, pais=${contact.country}` : "") +
-      (contact.decision_maker ? `, tomador=${contact.decision_maker}` : "") +
-      (contact.website ? `, web=${contact.website}` : "") +
-      (contact.linkedin ? `, linkedin=${contact.linkedin}` : ""),
-    `Campana: objetivo=${campaign.goal || ""}, industria=${campaign.industry || ""}, cargo=${campaign.role || ""}`,
-    segCtx,
-    `Cliente: ${client ? client.name : ""}`,
-    urlCtx,
-    txtCtx,
-    researchCtx,
-    directives ? `DIRECTRICES: ${directives}` : "",
-    `CANTIDAD EXACTA: ${chanInstr}`,
-    "Mensajes humanos y especificos. msg1=inicial, siguientes=followup.",
-    `Responde SOLO con JSON al final: {${jsonShape}}`,
-    "Incluye SOLO canales activos.",
-  ].filter(Boolean).join("\n");
+  if (urlSources.length > 0) {
+    parts.push(
+      "FUENTES WEB (busca información actualizada de estas URLs):",
+      ...urlSources.map(s => `- ${s.storage_path}`),
+      "",
+    );
+  }
 
-  return { prompt, pdfDocs, useSearch };
+  const channels: Channel[] = ["linkedin", "email", "whatsapp"];
+
+  parts.push(
+    "TAREA: Genera mensajes de outreach hiperpersonalizados para este contacto.",
+    "",
+    directives ? `DIRECTRICES ADICIONALES:\n${directives}\n` : "",
+    "Devuelve SOLO un objeto JSON con esta estructura exacta (sin bloques markdown):",
+    JSON.stringify({
+      linkedin: channels.includes("linkedin") ? ["mensaje linkedin 1", "mensaje linkedin 2 (seguimiento)"] : undefined,
+      email: channels.includes("email")
+        ? [{ subject: "asunto 1", body: "cuerpo 1" }, { subject: "asunto 2", body: "cuerpo 2 (seguimiento)" }]
+        : undefined,
+      whatsapp: channels.includes("whatsapp") ? ["mensaje whatsapp 1"] : undefined,
+    }),
+  );
+
+  return { prompt: parts.filter(p => p !== null).join("\n"), pdfDocs, useSearch };
 }
 
-// ─── Generar mensajes para 1 contacto ───────────────────────────────────────────────────
+// ─── GenService public API ────────────────────────────────────────────────
 export async function generateMessagesForContact(
   contact: BullseyeContact,
   campaign: BullseyeCampaign,
@@ -117,209 +117,155 @@ export async function generateMessagesForContact(
   client: Client | null,
   sources: BullseyeSource[],
   directives: string,
-): Promise<{
-  linkedin: string[];
-  email: { subject: string; body: string }[];
-  whatsapp: string[];
-  sources: { query: string; url: string }[];
-}> {
-  const { prompt, pdfDocs, useSearch } = buildPrompt(
-    contact, campaign, segment, client, sources, directives,
-  );
+): Promise<BullseyeMessage> {
+  const { prompt, pdfDocs, useSearch } = buildPrompt(contact, campaign, segment, client, sources, directives);
 
-  const messageContent =
-    pdfDocs.length > 0
-      ? [...pdfDocs, { type: "text", text: prompt }]
-      : [{ type: "text", text: prompt }];
+  const tools = useSearch
+    ? [{ name: "web_search", description: "Search the web", input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } }]
+    : undefined;
 
-  const body: Parameters<typeof callAnthropic>[0] = {
+  const messageContent = pdfDocs.length > 0
+    ? [...pdfDocs, { type: "text", text: prompt }]
+    : [{ type: "text", text: prompt }];
+
+  const resp: AnthropicResponse = await callAnthropic({
     messages: [{ role: "user", content: messageContent }],
-  };
-  if (useSearch) {
-    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  }
+    tools,
+    max_tokens: 2000,
+  });
 
-  const resp: AnthropicResponse = await callAnthropic(body);
-
-  try {
-    const m = resp.text.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(m ? m[0] : resp.text) as Record<string, unknown>;
-    const li = Array.isArray(parsed.linkedin) ? (parsed.linkedin as string[]) : parsed.linkedin ? [parsed.linkedin as string] : [];
-    const em = Array.isArray(parsed.email) ? (parsed.email as { subject: string; body: string }[]) : parsed.email ? [parsed.email as { subject: string; body: string }] : [];
-    const wa = Array.isArray(parsed.whatsapp) ? (parsed.whatsapp as string[]) : parsed.whatsapp ? [parsed.whatsapp as string] : [];
-    return { linkedin: li, email: em, whatsapp: wa, sources: resp.webSources };
-  } catch {
-    return {
-      linkedin: ["[Error]"],
-      email: [{ subject: "Error", body: resp.text.slice(0, 200) }],
-      whatsapp: ["[Error]"],
-      sources: resp.webSources,
-    };
-  }
-}
-
-// ─── Buyer persona (para simulación) ──────────────────────────────────────────────
-export interface PersonaShape {
-  name: string;
-  title: string;
-  summary: string;
-  pains: string[];
-  motivations: string[];
-  objections: string[];
-  kpis: string[];
-  channels: string[];
+  const m = resp.text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("La IA no devolvió JSON válido");
+  return JSON.parse(m[0]) as BullseyeMessage;
 }
 
 export async function generatePersona(
-  role: string,
-  industry: string,
-  contactTitles: string[],
-): Promise<PersonaShape> {
-  const titlesCtx = contactTitles.length
-    ? "Cargos reales de los contactos cargados en el segmento (úsalos como base principal):\n" +
-      contactTitles.slice(0, 40).map(t => "- " + t).join("\n")
-    : "Cargo referencia: " + role;
+  campaign: BullseyeCampaign,
+  contacts: BullseyeContact[],
+  client: Client | null,
+): Promise<{ name: string; description: string; pain_points: string[]; goals: string[]; communication_style: string }> {
+  const contactsSummary = contacts.slice(0, 10).map(c =>
+    [c.name, c.title, c.company, c.industry].filter(Boolean).join(" | ")
+  ).join("\n");
 
   const prompt = [
-    "Crea un buyer persona B2B detallado que represente al perfil predominante de esta lista de contactos.",
-    titlesCtx,
-    "Industria: " + industry,
-    "Analiza los cargos, identifica el perfil más común y construye el persona desde ahí.",
-    '{"name":"nombre ficticio","title":"cargo representativo","summary":"2 oraciones","pains":["p1","p2","p3"],"motivations":["m1","m2"],"objections":["o1","o2"],"kpis":["k1","k2"],"channels":["c1","c2"]}',
+    `Eres experto en marketing B2B. Analiza estos contactos de la campaña "${campaign.name}" de la empresa "${client?.name || "cliente"}" y crea un buyer persona representativo.`,
+    "",
+    `Objetivo de la campaña: ${campaign.objective || "No especificado"}`,
+    `ICP: ${campaign.icp || "No especificado"}`,
+    "",
+    "MUESTRA DE CONTACTOS:",
+    contactsSummary,
+    "",
+    "Responde SOLO con JSON válido (sin bloques markdown):",
+    `{"name":"Nombre del Persona","description":"Descripción en 2-3 oraciones","pain_points":["dolor 1","dolor 2","dolor 3"],"goals":["objetivo 1","objetivo 2"],"communication_style":"Descripción del estilo de comunicación preferido"}`
   ].join("\n");
 
   const resp = await callAnthropic({
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+    max_tokens: 1000,
   });
+
   const m = resp.text.match(/\{[\s\S]*\}/);
-  return JSON.parse(m ? m[0] : resp.text) as PersonaShape;
+  if (!m) throw new Error("La IA no devolvió JSON válido para el persona");
+  return JSON.parse(m[0]);
 }
 
-// ─── Job runner ────────────────────────────────────────────────────────────────────────
-export interface StartJobOpts {
-  segment: BullseyeSegment;
+// ─── Job runner ───────────────────────────────────────────────────────────
+interface RunOpts {
+  segId: string;
+  label: string;
+  toProcess: BullseyeContact[];
   campaign: BullseyeCampaign;
+  segment: BullseyeSegment;
   client: Client | null;
   sources: BullseyeSource[];
   directives: string;
-  toProcess: BullseyeContact[];
-  onDone?: () => void;
+  onProgress?: (current: number, total: number) => void;
 }
 
-export const GenService = {
-  subscribe(fn: Listener) {
-    _listeners.add(fn);
-    return () => _listeners.delete(fn);
-  },
-  getJobs() {
-    return new Map(_jobs);
-  },
-  isRunning(segId: string) {
-    return _jobs.has(segId);
-  },
-  cancel(segId: string) {
-    const j = _jobs.get(segId);
-    if (j) j.cancelled = true;
-  },
-  async start(segId: string, opts: StartJobOpts) {
-    if (_jobs.has(segId)) return;
-    const job: Job = {
-      segId,
-      current: 0,
-      total: opts.toProcess.length,
-      cancelled: false,
-      label: opts.segment.name,
-    };
-    _jobs.set(segId, job);
-    notify();
+const CONCURRENCY = 5;
 
-    const CONCURRENCY = 5;
-    const MAX_RETRIES = 1;
+export async function GenService(opts: RunOpts): Promise<void> {
+  const job: Job = { segId: opts.segId, current: 0, total: opts.toProcess.length, cancelled: false, label: opts.label };
+  _jobs.set(opts.segId, job);
+  notify();
 
-    const processContact = async (contact: BullseyeContact) => {
-      if (job.cancelled) return;
-      let lastErr: Error | null = null;
+  const queue = [...opts.toProcess];
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          const msg = await generateMessagesForContact(
-            contact, opts.campaign, opts.segment, opts.client, opts.sources, opts.directives,
-          );
-          await messagesRepo.upsert({
-            contact_id: contact.id,
-            segment_id: segId,
-            approved: false,
-            linkedin: msg.linkedin,
-            email: msg.email,
-            whatsapp: msg.whatsapp,
-            sources: msg.sources,
-            generated_at: new Date().toISOString(),
-          });
-          lastErr = null;
+  const processContact = async (contact: BullseyeContact) => {
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        const msg = await generateMessagesForContact(
+          contact,
+          opts.campaign,
+          opts.segment,
+          opts.client,
+          opts.sources,
+          opts.directives,
+        );
+        await messagesRepo.upsert(opts.segId, contact.id, msg);
+        break;
+      } catch (e) {
+        attempts++;
+        if (attempts >= 3) {
+          const errMsg: BullseyeMessage = { _error: String(e) };
+          await messagesRepo.upsert(opts.segId, contact.id, errMsg);
           break;
-        } catch (e: unknown) {
-          lastErr = e instanceof Error ? e : new Error(String(e));
-          if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
         }
+        await new Promise(r => setTimeout(r, 1000));
       }
-
-      if (lastErr) {
-        await messagesRepo.upsert({
-          contact_id: contact.id,
-          segment_id: segId,
-          approved: false,
-          linkedin: ["[Error: " + lastErr.message + "]"],
-          email: [{ subject: "Error", body: lastErr.message }],
-          whatsapp: ["[Error]"],
-          sources: [],
-        });
-      }
-
-      job.current += 1;
-      notify();
-    };
-
-    // Run with bounded concurrency
-    const queue = [...opts.toProcess];
-    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      while (queue.length > 0 && !job.cancelled) {
-        const contact = queue.shift()!;
-        await processContact(contact);
-      }
-    });
-    await Promise.all(workers);
-
-    _jobs.delete(segId);
-    await segmentsRepo.refreshCounts(segId);
+    }
+    job.current++;
     notify();
-    opts.onDone?.();
-  },
-};
+    opts.onProgress?.(job.current, job.total);
+  };
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
+  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+    while (queue.length > 0 && !job.cancelled) {
+      const contact = queue.shift()!;
+      await processContact(contact);
+    }
+  });
+
+  await Promise.all(workers);
+
+  await segmentsRepo.setGeneratedAt(opts.segId);
+  _jobs.delete(opts.segId);
+  notify();
+}
+
+export function cancelJob(segId: string) {
+  const job = _jobs.get(segId);
+  if (job) { job.cancelled = true; notify(); }
+}
+
+export function subscribeJobs(fn: Listener): () => void {
+  _listeners.add(fn);
+  fn(new Map(_jobs));
+  return () => _listeners.delete(fn);
+}
+
+// ─── Error helper ─────────────────────────────────────────────────────────
 export function isErrorMsg(m: { linkedin?: string[]; email?: { subject?: string; body?: string }[]; whatsapp?: string[] }) {
-  const liOk = m.linkedin?.some(x => x && !x.startsWith("[Error") && x.trim() !== "");
-  const emOk = m.email?.some(e => e?.body && e.body.trim() !== "" && e.subject !== "Error");
-  const waOk = m.whatsapp?.some(x => x && !x.startsWith("[Error") && x.trim() !== "");
-  return !liOk && !emOk && !waOk;
+  return "_error" in m;
 }
 
-// ─── Simulation ───────────────────────────────────────────────────────────────────────────────
-export interface SimulationReaction {
-  contact_name: string;
-  channel: string;
-  opens: boolean;
-  responds: boolean;
-  interest: "bajo" | "medio" | "alto";
-  comment: string;
-}
-
+// ─── Simulation types ─────────────────────────────────────────────────────
 export interface SimulationResult {
   open_rate: number;
   response_rate: number;
   interest_score: number;
-  interest_level: "bajo" | "medio" | "alto";
-  reactions: SimulationReaction[];
+  interest_level: "alto" | "medio" | "bajo";
+  reactions: Array<{
+    contact_name: string;
+    channel: string;
+    opens: boolean;
+    responds: boolean;
+    interest: "alto" | "medio" | "bajo";
+    comment: string;
+  }>;
   insights: {
     strengths: string[];
     weaknesses: string[];
@@ -330,59 +276,43 @@ export interface SimulationResult {
 export async function simulateMessages(
   messages: BullseyeMessage[],
   contacts: BullseyeContact[],
-  persona: { name: string; title: string; summary: string; pains: string[]; motivations: string[]; objections: string[] } | null,
+  persona: { name: string; description: string; pain_points: string[]; goals: string[]; communication_style: string } | null,
   campaign: BullseyeCampaign,
 ): Promise<SimulationResult> {
-  const validMessages = messages.filter(m => !isErrorMsg(m));
-  const sample = validMessages.slice(0, 6);
-  const chans = (campaign.channels || ["linkedin", "email"]) as Channel[];
+  const sample = messages.filter(m => !isErrorMsg(m)).slice(0, 6);
+  const contactSample = contacts.slice(0, 6);
 
-  const messagesCtx = sample.map(msg => {
-    const contact = contacts.find(c => c.id === msg.contact_id);
-    const lines: string[] = [`Contacto: ${contact?.name || "?"} (${contact?.title || "?"}, ${contact?.company || "?"})`];
-    if (chans.includes("linkedin") && msg.linkedin?.[0]) lines.push(`LinkedIn: ${msg.linkedin[0].slice(0, 200)}`);
-    if (chans.includes("email") && msg.email?.[0]) {
-      lines.push(`Email asunto: ${msg.email[0].subject}`);
-      lines.push(`Email cuerpo: ${msg.email[0].body.slice(0, 300)}`);
-    }
-    if (chans.includes("whatsapp") && msg.whatsapp?.[0]) lines.push(`WhatsApp: ${msg.whatsapp[0].slice(0, 200)}`);
+  const messagesText = sample.map((m, i) => {
+    const lines: string[] = [`--- Mensaje ${i + 1} (${contactSample[i]?.name || "Contacto"}) ---`];
+    if (m.linkedin?.length) lines.push(`LinkedIn: ${m.linkedin[0]}`);
+    if (m.email?.length) lines.push(`Email subject: ${m.email[0].subject}\nEmail body: ${m.email[0].body}`);
+    if (m.whatsapp?.length) lines.push(`WhatsApp: ${m.whatsapp[0]}`);
     return lines.join("\n");
-  }).join("\n\n---\n\n");
-
-  const personaCtx = persona
-    ? [
-        `Nombre: ${persona.name}`,
-        `Cargo: ${persona.title}`,
-        `Resumen: ${persona.summary}`,
-        `Pain Points: ${persona.pains.join(", ")}`,
-        `Motivaciones: ${persona.motivations.join(", ")}`,
-        `Objeciones: ${persona.objections.join(", ")}`,
-      ].join("\n")
-    : `Perfil objetivo: ${campaign.role || "decisor"} en industria ${campaign.industry || "B2B"}`;
+  }).join("\n\n");
 
   const prompt = [
-    "Eres un experto en evaluación de mensajes de outreach B2B. Simula la reacción realista de una audiencia virtual.",
+    "Eres experto en outreach B2B. Simula la reacción realista de una audiencia virtual ante estos mensajes.",
     "",
-    "BUYER PERSONA (representa la audiencia virtual que recibirá estos mensajes):",
-    personaCtx,
+    `CAMPAÑA: ${campaign.name}`,
+    campaign.objective ? `Objetivo: ${campaign.objective}` : "",
     "",
-    `CAMPAÑA: objetivo=${campaign.goal || ""}, industria=${campaign.industry || ""}, rol objetivo=${campaign.role || ""}`,
+    persona ? `BUYER PERSONA: ${persona.name}\n${persona.description}\nEstilo: ${persona.communication_style}` : "BUYER PERSONA: Decisor B2B genérico",
     "",
-    `MENSAJES DE OUTREACH (${sample.length} muestras de contactos reales):`,
-    messagesCtx,
+    "MENSAJES GENERADOS:",
+    messagesText,
     "",
-    "TAREA: Simula cómo reaccionaría esta audiencia virtual a estos mensajes.",
-    "Calcula métricas realistas comparadas con benchmarks B2B (LinkedIn ~25-45% apertura, email ~20-35%, respuesta típica 5-20%).",
-    "Sé crítico y honesto. Para cada reacción, evalúa el mensaje del canal más representativo.",
-    "Los insights deben ser concretos y accionables, no genéricos.",
+    "TAREA:",
+    "1. Simula 6 reacciones ficticias realistas de prospectos que reciben estos mensajes.",
+    "2. Calcula métricas realistas (benchmarks: LinkedIn apertura 30-50%, email 20-35%, respuesta 5-20%).",
+    "3. Genera insights concretos sobre fortalezas, debilidades y sugerencias de mejora.",
     "",
     "Responde SOLO con JSON válido (sin bloques markdown):",
-    `{"open_rate":35,"response_rate":12,"interest_score":58,"interest_level":"medio","reactions":[{"contact_name":"Nombre del contacto","channel":"linkedin","opens":true,"responds":false,"interest":"medio","comment":"Comentario específico de 1 oración"}],"insights":{"strengths":["punto fuerte concreto 1","punto fuerte concreto 2"],"weaknesses":["debilidad concreta 1","debilidad concreta 2"],"suggestions":["sugerencia accionable 1","sugerencia accionable 2","sugerencia accionable 3"]}}`,
+    `{"open_rate":35,"response_rate":12,"interest_score":58,"interest_level":"medio","reactions":[{"contact_name":"Nombre","channel":"linkedin","opens":true,"responds":false,"interest":"medio","comment":"Comentario"}],"insights":{"strengths":["fortaleza 1"],"weaknesses":["debilidad 1"],"suggestions":["sugerencia 1"]}}`,
   ].join("\n");
 
   const resp = await callAnthropic({
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 3000,
+    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+    max_tokens: 2500,
   });
 
   const m = resp.text.match(/\{[\s\S]*\}/);
@@ -390,7 +320,6 @@ export async function simulateMessages(
   return JSON.parse(m[0]) as SimulationResult;
 }
 
-// ─── Simulate a raw sequence (standalone simulator) ─────────────────────────────────
 export async function simulateSequence(
   sequenceText: string,
   sequencePdf: { content: string; name: string } | null,
@@ -443,4 +372,57 @@ export async function simulateSequence(
   const m2 = resp.text.match(/\{[\s\S]*\}/);
   if (!m2) throw new Error("La IA no devolvió JSON válido en la simulación de secuencia");
   return JSON.parse(m2[0]) as SimulationResult;
+}
+
+export async function applySequenceSuggestions(
+  sequenceText: string,
+  sequencePdf: { content: string; name: string } | null,
+  suggestions: string[],
+  channels: string[],
+  objective: string,
+  industry: string,
+  role: string,
+): Promise<string> {
+  const suggestionList = suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
+
+  const prompt = [
+    "Eres experto en copywriting B2B y secuencias de outreach. Tu tarea es reescribir y mejorar una secuencia de mensajes.",
+    "",
+    "PARÁMETROS:",
+    `Objetivo: ${objective || "No especificado"}`,
+    `Industria: ${industry || "B2B"}`,
+    `Rol objetivo: ${role || "Decisor"}`,
+    `Canales activos: ${channels.join(", ")}`,
+    "",
+    sequencePdf
+      ? "SECUENCIA ORIGINAL: ver documento PDF adjunto."
+      : `SECUENCIA ORIGINAL:\n${sequenceText.slice(0, 4000)}`,
+    "",
+    "SUGERENCIAS A APLICAR OBLIGATORIAMENTE:",
+    suggestionList,
+    "",
+    "INSTRUCCIONES:",
+    "- Reescribe la secuencia completa incorporando todas las sugerencias anteriores.",
+    "- Mantén la misma estructura de mensajes y canales.",
+    "- Mejora el copy sin cambiar la voz ni el tono general del remitente.",
+    "- Devuelve SOLO la secuencia mejorada, sin explicaciones adicionales.",
+  ].join("\n");
+
+  const messageContent = sequencePdf
+    ? [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: sequencePdf.content },
+          title: sequencePdf.name,
+        },
+        { type: "text", text: prompt },
+      ]
+    : [{ type: "text", text: prompt }];
+
+  const resp = await callAnthropic({
+    messages: [{ role: "user", content: messageContent }],
+    max_tokens: 4000,
+  });
+
+  return resp.text.trim();
 }
